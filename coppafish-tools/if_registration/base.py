@@ -4,7 +4,6 @@ import numpy as np
 import napari
 from tqdm import tqdm
 from coppafish.register.base import split_3d_image, find_shift_array, huber_regression
-from coppafish.register.preprocessing import custom_shift
 from coppafish.utils.nd2 import get_nd2_tile_ind
 from scipy.ndimage import affine_transform
 from typing import Tuple
@@ -44,8 +43,6 @@ def extract_raw(raw_dir: str, output_dir: str, if_round_name: str, use_tiles: li
             image = np.rot90(image, k=num_rotations, axes=(1, 2))[1:]
             # Save image
             np.save(os.path.join(output_dir, f"{if_round_name}_t_{tile}c_{channel}.npy"), image)
-
-
 
 
 # nb = Notebook('/home/servers/zaru/ISS/Izzie/Nami-230907_hTau_73g_NN_ADLR+HR_anti/output/notebook.npz')
@@ -147,7 +144,6 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     # 1. Manual selection of reference points for shift and rotation correction
     # 2. Local correction for z shifts
 
-
     assert anchor_dapi.shape == if_dapi.shape, "Anchor and IF images must be the same shape"
     # 1. Global correction for shift and rotation
     anchor_dapi_2d = np.max(anchor_dapi, axis=0)
@@ -172,8 +168,7 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     U, S, Vt = np.linalg.svd(target_points_centred.T @ base_points_centred)
     R = U @ Vt
     angle = np.arccos(R[0, 0])
-    base_points_rotated = base_points_centred @ R.T + base_mean
-    shift = np.mean(target_points - base_points_rotated, axis=0)
+    shift = target_mean - base_mean
     # This shift is assuming the affine transform is centred at the centre of mass of the anchor points (base mean), so
     # we need to correct for this and make our shift relative to (0, 0)
     shift += (np.eye(2) - R) @ base_mean
@@ -254,33 +249,41 @@ def gaussian_kernel(size: list, sigma: float) -> np.ndarray:
     return kernel
 
 
-reg_parameters = {'subvolume_size': np.array([16, 512, 512]),
-                    'n_subvolumes': np.array([3, 5, 5]),
-                    'r_threshold': 0.8}
-anchor_dapi = generate_random_image([21, 51, 51], 10, 500, [30, 1500, 1500],
-                                    seed=17)
-# Sort out a transform which our algorithm should be able to find
-angle = np.pi / 12
-rotation_matrix = np.array([[1, 0, 0],
-                            [0, np.cos(angle), -np.sin(angle)],
-                            [0, np.sin(angle), np.cos(angle)]])
-# we want to rotate around the centre of the image
-offset = (np.eye(3) - rotation_matrix) @ np.array([0, anchor_dapi.shape[1] // 2, anchor_dapi.shape[2] // 2])
-shift = np.array([0, 10, 20])
-if_dapi = affine_transform(anchor_dapi, rotation_matrix, offset=offset, order=0)
-# Now add some 3d shifts
-z_shift = np.arange(-10, 11)
-num_z_shifts = len(z_shift)
-x_chunk = anchor_dapi.shape[2] // num_z_shifts
-for i, z in enumerate(z_shift):
-    begin_x = i * x_chunk
-    end_x = (i + 1) * x_chunk
-    if_dapi[:, :, begin_x:end_x] = custom_shift(if_dapi[:, :, begin_x:end_x],
-                                                        offset=np.array([z, 0, 0]).astype(int))
-# Now run the registration!
-if_dapi_aligned, transform = register_if(anchor_dapi, if_dapi, reg_parameters)
-# Now check the transform
-viewer = napari.Viewer()
-viewer.add_image(anchor_dapi, name='anchor_dapi', colormap='red', blending='additive')
-viewer.add_image(if_dapi_aligned, name='if_dapi', colormap='green', blending='additive')
-napari.run()
+# reg_parameters = {'subvolume_size': np.array([16, 512, 512]),
+#                     'n_subvolumes': np.array([3, 5, 5]),
+#                     'r_threshold': 0.8}
+# anchor_dapi = generate_random_image([21, 51, 51], 10, 500, [30, 1500, 1500],
+#                                     seed=260)
+# # Sort out a transform which our algorithm should be able to find
+# angle = 2 * np.pi / 12
+# rotation_matrix = np.array([[1, 0, 0],
+#                             [0, np.cos(angle), -np.sin(angle)],
+#                             [0, np.sin(angle), np.cos(angle)]])
+# # we want to rotate around the centre of the image
+# offset = (np.eye(3) - rotation_matrix) @ np.array([0, anchor_dapi.shape[1] // 2, anchor_dapi.shape[2] // 2])
+# shift = np.array([0, 10, 20])
+# if_dapi = affine_transform(anchor_dapi, rotation_matrix, offset=offset, order=0)
+# # Now add some 3d shifts
+# z_shift = np.arange(-10, 11)
+# num_z_shifts = len(z_shift)
+# x_chunk = anchor_dapi.shape[2] // num_z_shifts
+# for i, z in enumerate(z_shift):
+#     begin_x = i * x_chunk
+#     end_x = (i + 1) * x_chunk
+#     if_dapi[:, :, begin_x:end_x] = custom_shift(if_dapi[:, :, begin_x:end_x],
+#                                                         offset=np.array([z, 0, 0]).astype(int))
+# # Now run the registration!
+# if_dapi_aligned, transform = register_if(anchor_dapi, if_dapi, reg_parameters)
+# # Now check the transform
+# viewer = napari.Viewer()
+# viewer.add_image(anchor_dapi, name='anchor_dapi', colormap='red', blending='additive')
+# viewer.add_image(if_dapi_aligned, name='if_dapi', colormap='green', blending='additive')
+# napari.run()
+# reg_parameters = {'subvolume_size': np.array([16, 512, 512]),
+#                     'n_subvolumes': np.array([3, 5, 5]),
+#                     'r_threshold': 0.8}
+# anchor_dapi = np.load('')
+# if_dapi = np.load('')
+# if_dapi_aligned, transform = register_if(anchor_dapi, if_dapi, reg_parameters)
+# np.save('', transform)
+# np.save('', if_dapi_aligned)
