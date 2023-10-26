@@ -4,6 +4,7 @@ import numpy as np
 import napari
 from tqdm import tqdm
 from coppafish.register.base import split_3d_image, find_shift_array, huber_regression
+from coppafish.register.preprocessing import custom_shift
 from coppafish.utils.nd2 import get_nd2_tile_ind
 from scipy.ndimage import affine_transform
 from typing import Tuple
@@ -210,6 +211,17 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     return if_dapi_aligned, transform
 
 
+def apply_transform(image: np.ndarray, transform: np.ndarray) -> np.ndarray:
+    """
+    Apply a 3d affine transform to an image
+    :param image: z y x image to be transformed
+    :param transform: 3 x 4 transform in z y x
+    :return: image_transformed: np.ndaraay transformed image
+    """
+    image = affine_transform(image, transform, order=5)
+    return image
+
+
 def generate_random_image(spot_dims: list, spot_spread: int, n_spots: int, image_size: list,
                           seed: int) -> np.ndarray:
     """
@@ -258,7 +270,7 @@ def gaussian_kernel(size: list, sigma: float) -> np.ndarray:
 #                     'n_subvolumes': np.array([3, 5, 5]),
 #                     'r_threshold': 0.8}
 # anchor_dapi = generate_random_image([21, 51, 51], 10, 500, [30, 1500, 1500],
-#                                     seed=260)
+#                                     seed=51)
 # # Sort out a transform which our algorithm should be able to find
 # angle = 2 * np.pi / 12
 # rotation_matrix = np.array([[1, 0, 0],
