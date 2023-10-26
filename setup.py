@@ -1,7 +1,7 @@
 import os
 from setuptools import setup, find_packages
 
-with open("coppafish-tools/_version.py", "r") as f:
+with open("coppafish_tools/_version.py", "r") as f:
     exec(f.read())
 
 with open("README.md", "r") as f:
@@ -10,7 +10,7 @@ with open("README.md", "r") as f:
 packages = [folder for folder in find_packages() if folder[-5:] != '.test']  # Get rid of test packages
 
 setup(
-    name='coppafish-tools',
+    name='coppafish_tools',
     version=__version__,
     description='coppaFISH software for Python',
     long_description=long_desc,

@@ -143,7 +143,7 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     # Steps are as follows:
     # 1. Manual selection of reference points for shift and rotation correction
     # 2. Local correction for z shifts
-
+    # TODO: Handle if anchor and IF images are different sizes
     assert anchor_dapi.shape == if_dapi.shape, "Anchor and IF images must be the same shape"
     # 1. Global correction for shift and rotation
     anchor_dapi_2d = np.max(anchor_dapi, axis=0)
