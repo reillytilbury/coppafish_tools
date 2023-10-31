@@ -145,11 +145,14 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     # 1. Manual selection of reference points for shift and rotation correction
     # 2. Local correction for z shifts
     if anchor_dapi.shape != if_dapi.shape:
-        z_box, y_box, x_box = np.max(np.vstack((anchor_dapi.shape, if_dapi.shape)))
-        anchor_dapi_full, if_dapi_full = np.zeros((z_box, y_box, x_box)), np.zeros((z_box, y_box, x_box))
-        anchor_dapi_full[:z_box, :y_box, :x_box], if_dapi_full[:z_box, :y_box, :x_box] = anchor_dapi, if_dapi
-        anchor_dapi, if_dapi = anchor_dapi_full, if_dapi_full
-        del anchor_dapi_full, if_dapi_full
+      z_box_anchor, y_box_anchor, x_box_anchor = np.array(anchor_dapi.shape)
+      z_box_if, y_box_if, x_box_if = np.array(if_dapi.shape)
+      z_box, y_box, x_box = max(z_box_anchor, z_box_if), max(y_box_anchor, y_box_if), max(x_box_anchor, x_box_if)
+      anchor_dapi_full, if_dapi_full = np.zeros((z_box, y_box, x_box)), np.zeros((z_box, y_box, x_box))
+      anchor_dapi_full[:z_box_anchor, :y_box_anchor, :x_box_anchor] = anchor_dapi
+      if_dapi_full[:z_box_if, :y_box_if, :x_box_if] = if_dapi
+      anchor_dapi, if_dapi = anchor_dapi_full, if_dapi_full
+      del anchor_dapi_full, if_dapi_full
 
     # 1. Global correction for shift and rotation
     anchor_dapi_2d = np.max(anchor_dapi, axis=0)
