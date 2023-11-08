@@ -3,15 +3,19 @@ import nd2
 import numpy as np
 import napari
 from tqdm import tqdm
-from coppafish.register.base import split_3d_image, find_shift_array, huber_regression
-from coppafish.register.preprocessing import custom_shift
-from coppafish.utils.nd2 import get_nd2_tile_ind
+from coppafish import Notebook
+from coppafish.register.base import find_shift_array, huber_regression
+from coppafish.register.preprocessing import custom_shift, split_3d_image
+from coppafish.utils.nd2 import get_nd2_tile_ind, get_metadata
+from coppafish.utils.raw import load_image, load_dask
+from coppafish.setup.tile_details import get_tilepos
 from scipy.ndimage import affine_transform
+from skimage.io import imsave
 from typing import Tuple
 
 
-def extract_raw(raw_dir: str, output_dir: str, if_round_name: str, use_tiles: list, use_channels: list,
-                tilepos_yx_npy: np.ndarray, tilepos_yx_nd2: np.ndarray, num_rotations: int = 0):
+def extract_raw(raw_dir: str, output_dir: str, if_round_name: str, use_channels: list, num_rotations: int = 0,
+                overlap: float = 0.1):
     """
     Extract images from ND2 file and save them as .npy files without any filtering
     Args:
@@ -20,10 +24,9 @@ def extract_raw(raw_dir: str, output_dir: str, if_round_name: str, use_tiles: li
         if_round_name: (str) Name of the IF round. Images will be saved as if_round_name_t_{tile}c_{channel}.npy
         use_tiles: (list) List of tiles to use
         use_channels: (list) List of channels to use
-        tilepos_yx_npy: (np.ndarray) Array of tile positions in yx coordinates in npy order
-        tilepos_yx_nd2: (np.ndarray) Array of tile positions in yx coordinates in nd2 order
         num_rotations: (int) Number of rotations to apply to the images (default = 0) rotations are applied in the
             order of axes (1, 2) i.e. y and x axes
+        overlap: expected overlap between tiles
 
     """
     # Check if directories exist
@@ -33,17 +36,85 @@ def extract_raw(raw_dir: str, output_dir: str, if_round_name: str, use_tiles: li
     # Load ND2 file
     with nd2.ND2File(raw_dir) as f:
         nd2_file = f.to_dask()
+        n_tiles = f.sizes['P']
+        n_chanels = f.sizes['C']
+        tile_sz = f.sizes['X']
+        pixel_size_xy = f.metadata.channels[0].volume.axesCalibration[0]
+
+        xy_pos = np.array([f.experiment[0].parameters.points[i].stagePositionUm[:2]
+                           for i in range(n_tiles)])
+        xy_pos = (xy_pos - np.min(xy_pos, 0)) / pixel_size_xy
+
+    tilepos_yx_nd2, tilepos_yx = get_tilepos(xy_pos=xy_pos, tile_sz=tile_sz, expected_overlap=overlap)
 
     # Loop through tiles and channels
-    for tile in tqdm.tqdm(range(len(use_tiles)), desc="Extracting IF images"):
-        for channel in use_channels:
-            print(f"Extracting tile {use_tiles[tile]}, channel {channel}")
-            tile_nd2 = get_nd2_tile_ind(use_tiles[tile], tile_pos_yx_nd2=tilepos_yx_nd2, tile_pos_yx_npy=tilepos_yx_npy)
+    for channel in tqdm(use_channels, desc='Extracting channel'):
+
+        channel_dir = os.path.join(output_dir, f'channel_{channel}')
+        os.makedirs(channel_dir, exist_ok=True)
+
+        for tile in tqdm(range(n_tiles), desc="Extracting tile"):
+            tile_nd2 = get_nd2_tile_ind(tile, tile_pos_yx_nd2=tilepos_yx_nd2, tile_pos_yx_npy=tilepos_yx)
+
             # Load image (as z,y,x)
             image = np.array(nd2_file[tile_nd2, :, channel])
             image = np.rot90(image, k=num_rotations, axes=(1, 2))[1:]
+            image = image.astype(np.uint16)
             # Save image
-            np.save(os.path.join(output_dir, f"{if_round_name}_t_{tile}c_{channel}.npy"), image)
+            _y, _x = tilepos_yx_nd2[tile_nd2]
+            imsave(os.path.join(channel_dir, f"{_x}_{_y}.tif"), image)
+
+
+def extract_seq_dapi(path, output_dir):
+    """
+    Function to convert DAPI images from sequencing to tif files for zetastitcher.
+    If the final shape is non-rectangular, this function will create empty black tiles.
+
+    Args:
+        path: path to Notebook
+        output_dir: Directory where to save the DAPI files
+    """
+
+    # Load notebook
+    nb = Notebook(config_file=path)
+    config = nb.get_config()
+
+    anchor_dask = load_dask(nb.file_names, nb.basic_info, r=7)
+
+    for i in tqdm(nb.basic_info.use_tiles):
+
+        image = load_image(nb.file_names, nb.basic_info, t=i, c=0, round_dask_array=anchor_dask)
+        image = np.swapaxes(image, -1, 0)
+
+        # image = np.rot90(image, k=config['extract']['num_rotations'], axes=(1, 2))
+
+        # Save image
+        _y, _x = nb.basic_info.tilepos_yx[i]
+        imsave(os.path.join(output_dir, f"{_x}_{_y}.tif"), image)
+
+    # Finding everything possible coordinates in the bounding rectangle
+    ymax, xmax = np.max(nb.basic_info.tilepos_yx, axis=0)
+    all_pos = list()
+    for y in range(ymax+1):
+        for x in range(xmax+1):
+            all_pos.append((y, x))
+
+    tilepos = list(map(tuple, nb.basic_info.tilepos_yx))
+
+    if len(all_pos) != len(tilepos):
+
+        # Finding missing tiles
+        missing_pos = list()
+        for p in all_pos:
+            if p not in tilepos:
+                missing_pos.append(p)
+
+        print(f'Sequencing image was not rectangular, padding the image with {len(missing_pos)} black tiles')
+
+        im_shape = (len(nb.basic_info.use_z), nb.basic_info.tile_sz, nb.basic_info.tile_sz)
+
+        for p in missing_pos:
+            imsave(os.path.join(output_dir, f"{p[1]}_{p[0]}.tif"), np.zeros(im_shape))
 
 
 # nb = Notebook('/home/servers/zaru/ISS/Izzie/Nami-230907_hTau_73g_NN_ADLR+HR_anti/output/notebook.npz')
@@ -187,7 +258,10 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     print(f"Initial angle is {np.round(angle * 180 / np.pi, 2)} degrees and shift is "
           f"{np.round(transform_initial[:2, 2], 2)}")
     # Now apply the transform to the IF image
-    if_dapi_aligned_initial = affine_transform(if_dapi, transform_initial)
+
+    if_dapi_aligned_initial = affine_transform(if_dapi, transform_initial, order=0)
+
+
     v = napari.Viewer()
     v.add_image(anchor_dapi, name='anchor_dapi', colormap='red', blending='additive')
     v.add_image(if_dapi_aligned_initial, name='if_dapi', colormap='green', blending='additive')
@@ -208,7 +282,7 @@ def register_if(anchor_dapi: np.ndarray, if_dapi: np.ndarray, reg_parameters: di
     # Use these shifts to compute a global affine transform
     transform_3d_correction = huber_regression(shift, position, predict_shift=False)
     # Apply the transform to the IF image
-    if_dapi_aligned = affine_transform(if_dapi_aligned_initial, transform_3d_correction)
+    if_dapi_aligned = affine_transform(if_dapi_aligned_initial, transform_3d_correction, order=0)
     transform = (np.vstack((transform_initial, [0, 0, 0, 1])) @ np.vstack((transform_3d_correction, [0, 0, 0, 1])))[:3, :]
 
     return if_dapi_aligned, transform
